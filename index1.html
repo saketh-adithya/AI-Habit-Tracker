@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Aesthetic Habit Tracker (V6 Unbreakable)</title>
+    
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Courier+Prime:ital,wght@0,400;0,700;1,400&family=Inconsolata:wght@400;700&family=Inter:wght@300;400;600;800&family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Roboto+Mono:wght@400;700&family=Dancing+Script:wght@400;700&family=Orbitron:wght@400;700&family=Verdana:wght@400&family=Georgia:wght@400&family=Times+New+Roman:wght@400&family=Arial:wght@400&display=swap" rel="stylesheet">
+
+    <style>
+        .custom-scrollbar::-webkit-scrollbar { height: 4px; width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #d4d4d8; border-radius: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #a1a1aa; }
+        
+        body { transition: background-color 0.5s ease, color 0.5s ease; overscroll-behavior-y: none; }
+        
+        input[type=number]::-webkit-inner-spin-button, 
+        input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+
+        /* --- CLOCK VISIBILITY FIX --- */
+        ::-webkit-calendar-picker-indicator {
+            filter: invert(0); 
+            cursor: pointer;
+            opacity: 0.6;
+            transition: opacity 0.2s;
+        }
+        ::-webkit-calendar-picker-indicator:hover { opacity: 1; }
+
+        /* Forces white icon in dark mode */
+        .theme-dark-input ::-webkit-calendar-picker-indicator {
+            filter: invert(1) !important;
+            opacity: 0.9;
+        }
+
+        .heatmap-day:hover::after {
+            content: attr(data-date);
+            position: absolute;
+            bottom: 120%;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 4px 8px;
+            background: #333;
+            color: white;
+            font-size: 10px;
+            border-radius: 4px;
+            white-space: nowrap;
+            z-index: 10;
+            pointer-events: none;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        
+        .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef, useCallback } = React;
+        
+        // --- GLOBAL HELPERS (Crash Prevention) ---
+        // 1. Safe Data Loader
+        const loadState = (key, fallback) => {
+            try {
+                const saved = localStorage.getItem(key);
+                if (!saved || saved === "undefined" || saved === "null") return fallback;
+                return JSON.parse(saved);
+            } catch (e) {
+                console.error(`Corrupted data for ${key}, resetting to default.`);
+                return fallback;
+            }
+        };
+
+        // 2. Date Helpers
+        const getLocalISOString = (d) => {
+            const offset = d.getTimezoneOffset() * 60000;
+            return new Date(d.getTime() - offset).toISOString().split('T')[0];
+        };
+
+        const calculateDuration = (b, w) => { 
+            if (!b || !w) return 0; 
+            const [h1, m1] = b.split(':').map(Number); 
+            const [h2, m2] = w.split(':').map(Number); 
+            let d = (h2 + m2/60) - (h1 + m1/60); 
+            if (d < 0) d += 24; 
+            return d; 
+        };
+
+        const generateDateKey = (currentDate, d) => {
+            const dateObj = new Date(currentDate.getFullYear(), currentDate.getMonth(), d);
+            return getLocalISOString(dateObj);
+        };
+
+        // --- Icons ---
+        const IconWrapper = ({ children, size = 24, className = "" }) => <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>{children}</svg>;
+        const Home = (p) => <IconWrapper {...p}><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></IconWrapper>;
+        const TimerIcon = (p) => <IconWrapper {...p}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></IconWrapper>;
+        const Settings = (p) => <IconWrapper {...p}><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.095a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.74v-.47a2 2 0 0 1 1-1.74l.15-.095a2 2 0 0 0 .73-2.73l-.22-.35a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></IconWrapper>;
+        const ChevronLeft = (p) => <IconWrapper {...p}><path d="m15 18-6-6 6-6"/></IconWrapper>;
+        const ChevronRight = (p) => <IconWrapper {...p}><path d="m9 18 6-6-6-6"/></IconWrapper>;
+        const Plus = (p) => <IconWrapper {...p}><path d="M5 12h14"/><path d="M12 5v14"/></IconWrapper>;
+        const Minus = (p) => <IconWrapper {...p}><path d="M5 12h14"/></IconWrapper>;
+        const Trash2 = (p) => <IconWrapper {...p}><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></IconWrapper>;
+        const Brain = (p) => <IconWrapper {...p}><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/><path d="M17.599 6.5a3 3 0 0 0 .399-1.375"/><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"/><path d="M3.477 10.896a4 4 0 0 1 .585-.396"/><path d="M19.938 10.5a4 4 0 0 1 .585.396"/><path d="M6 18a4 4 0 0 1-1.97-3.284"/><path d="M17.97 14.716A4 4 0 0 1 16 18"/></IconWrapper>;
+        const X = (p) => <IconWrapper {...p}><path d="M18 6 6 18"/><path d="m6 6 18 18"/></IconWrapper>;
+        const Loader2 = ({ className, ...p }) => <IconWrapper className={`animate-spin ${className}`} {...p}><path d="M21 12a9 9 0 1 1-6.219-8.56"/></IconWrapper>;
+        const Palette = (p) => <IconWrapper {...p}><circle cx="13.5" cy="6.5" r=".5"/><circle cx="17.5" cy="10.5" r=".5"/><circle cx="8.5" cy="7.5" r=".5"/><circle cx="6.5" cy="12.5" r=".5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.01 17.461 2 12 2z"/></IconWrapper>;
+        const Type = (p) => <IconWrapper {...p}><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" x2="15" y1="20" y2="20"/><line x1="12" x2="12" y1="4" y2="20"/></IconWrapper>;
+        const ExternalLink = (p) => <IconWrapper {...p}><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" x2="21" y1="14" y2="3"/></IconWrapper>;
+        const Play = (p) => <IconWrapper {...p}><polygon points="5 3 19 12 5 21 5 3"/></IconWrapper>;
+        const Pause = (p) => <IconWrapper {...p}><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></IconWrapper>;
+        const Book = (p) => <IconWrapper {...p}><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></IconWrapper>;
+        const Edit2 = (p) => <IconWrapper {...p}><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></IconWrapper>;
+
+        // --- POPUP GENERATOR (V4 Master-Slave) ---
+        const openTimerWindow = (activeThemeConfig, timeLeft, totalTime, isActive, endTime) => {
+            const bgColor = activeThemeConfig.popBg;
+            const textColor = activeThemeConfig.popText;
+            const gridColor = activeThemeConfig.popGrid;
+            const isLightTheme = activeThemeConfig.id === 'offWhite' || activeThemeConfig.id === 'white';
+            const strokeColor = isLightTheme ? '#000000' : activeThemeConfig.popText;
+
+            const timerHtml = `
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                    <meta charset="UTF-8">
+                    <title>Focus Timer</title>
+                    <script src="https://cdn.tailwindcss.com"><\/script>
+                    <style>
+                        body { background-color: ${bgColor}; color: ${textColor}; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; font-family: monospace; overflow: hidden; }
+                        button { cursor: pointer; transition: all 0.2s; }
+                        .icon-btn { padding: 0.5rem; border-radius: 9999px; border: 2px solid currentColor; display: flex; align-items: center; justify-content: center; }
+                        .icon-btn:hover { opacity: 0.7; }
+                        .ring-transition { transition: stroke-dashoffset 0.1s linear; } 
+                    </style>
+                </head>
+                <body>
+                    <div class="relative flex flex-col items-center justify-center">
+                        <svg width="200" height="200" viewBox="0 0 100 100" style="transform: rotate(-90deg);">
+                            <circle cx="50" cy="50" r="45" stroke="${gridColor}" stroke-width="8" fill="none" />
+                            <circle id="progress-ring" class="ring-transition" cx="50" cy="50" r="45" stroke="${strokeColor}" stroke-width="8" fill="none" stroke-dasharray="283" stroke-dashoffset="0" stroke-linecap="round" />
+                        </svg>
+                        <div id="time-display" class="absolute text-4xl font-bold">--:--</div>
+                    </div>
+                    <div class="flex gap-6 mt-6 items-center justify-center">
+                        <button id="btn-minus" class="p-4 rounded hover:bg-gray-200/20 text-2xl font-bold" title="Subtract 5m">-</button>
+                        <button id="btn-toggle" class="icon-btn w-16 h-16 flex items-center justify-center" title="Play/Pause">
+                            <span id="icon-state">▶</span>
+                        </button>
+                        <button id="btn-plus" class="p-4 rounded hover:bg-gray-200/20 text-2xl font-bold" title="Add 5m">+</button>
+                    </div>
+
+                    <script>
+                        const timeDisplay = document.getElementById('time-display');
+                        const progressRing = document.getElementById('progress-ring');
+                        const iconState = document.getElementById('icon-state');
+
+                        // Send command to Parent
+                        const sendCommand = (type, payload) => {
+                            if (window.opener && !window.opener.closed) {
+                                window.opener.postMessage({ type, payload }, '*');
+                            }
+                        };
+
+                        document.getElementById('btn-minus').onclick = () => sendCommand('ADJUST', -5);
+                        document.getElementById('btn-plus').onclick = () => sendCommand('ADJUST', 5);
+                        document.getElementById('btn-toggle').onclick = () => sendCommand('TOGGLE', null);
+
+                        // Initial Request
+                        sendCommand('SYNC_REQUEST', null);
+
+                        // Listen for updates from Parent
+                        window.addEventListener('message', (event) => {
+                            const { type, payload } = event.data;
+                            if (type === 'STATE_UPDATE') {
+                                render(payload);
+                            }
+                        });
+
+                        const render = (state) => {
+                            let displayTime = state.timeLeft;
+                            if (state.isActive && state.endTime) {
+                                displayTime = Math.max(0, Math.ceil((state.endTime - Date.now()) / 1000));
+                            }
+                            const mins = Math.floor(displayTime / 60).toString().padStart(2, '0');
+                            const secs = (displayTime % 60).toString().padStart(2, '0');
+                            timeDisplay.innerText = \`\${mins}:\${secs}\`;
+                            const progress = ((state.totalTime - displayTime) / state.totalTime) * 283;
+                            progressRing.style.strokeDashoffset = progress;
+                            iconState.innerText = state.isActive ? '||' : '▶';
+                        };
+                    <\/script>
+                </body>
+                </html>`;
+            
+            const blob = new Blob([timerHtml], { type: 'text/html' });
+            const url = URL.createObjectURL(blob);
+            return window.open(url, "FocusTimer", "width=300,height=350,resizable=no,scrollbars=no,status=no");
+        };
+
+        const AestheticHabitTracker = () => {
+            // --- Config ---
+            const themes = {
+                offWhite: { 
+                    id: 'offWhite', label: 'Journal', bgApp: 'bg-[#f4f4f5]', bgCard: 'bg-[#faf9f6]', textMain: 'text-gray-900', textSec: 'text-gray-500', border: 'border-black', borderSec: 'border-gray-300', accent: 'bg-gray-200', highlight: 'bg-yellow-50', inputFocus: 'focus:border-black', btn: 'bg-white border border-black hover:bg-gray-100 text-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] active:translate-y-[1px] active:translate-x-[1px] transition-all', dotColor: '#a1a1aa', chartLine: '#000000', chartGrid: '#e4e4e7', chartDotFill: '#000000', chartDotStroke: '#ffffff', headerBg: 'bg-[#f4f4f5]', cellHover: 'hover:bg-gray-100', cellActive: 'bg-gray-50', xColor: 'text-black', sleepBarDefault: '#d4d4d8', sleepBarGreen: '#22c55e', sleepBarRed: '#ef4444', chartText: '#111827', innerCardBg: 'bg-white', journalSquare: 'bg-gray-200', journalActive: 'bg-black',
+                    popBg: '#faf9f6', popText: '#18181b', popGrid: '#e4e4e7'
+                },
+                white: { 
+                    id: 'white', label: 'Clean', bgApp: 'bg-white', bgCard: 'bg-white', textMain: 'text-gray-900', textSec: 'text-gray-400', border: 'border-black', borderSec: 'border-gray-200', accent: 'bg-gray-50', highlight: 'bg-blue-50', inputFocus: 'focus:border-blue-500', btn: 'bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 shadow-sm hover:shadow-md transition-all', dotColor: '#e5e7eb', chartLine: '#1f2937', chartGrid: '#f3f4f6', chartDotFill: '#1f2937', chartDotStroke: '#ffffff', headerBg: 'bg-white', cellHover: 'hover:bg-gray-50', cellActive: 'bg-gray-50', xColor: 'text-gray-900', sleepBarDefault: '#e5e7eb', sleepBarGreen: '#22c55e', sleepBarRed: '#ef4444', chartText: '#111827', innerCardBg: 'bg-gray-50', journalSquare: 'bg-gray-100', journalActive: 'bg-blue-500',
+                    popBg: '#ffffff', popText: '#111827', popGrid: '#f3f4f6'
+                },
+                gray: { 
+                    id: 'gray', label: 'Concrete', bgApp: 'bg-gray-900', bgCard: 'bg-gray-800', textMain: 'text-gray-100', textSec: 'text-gray-400', border: 'border-white', borderSec: 'border-gray-600', accent: 'bg-gray-700', highlight: 'bg-gray-700', inputFocus: 'focus:border-gray-400', btn: 'bg-gray-800 border border-gray-500 hover:bg-gray-700 text-gray-200 shadow-sm', dotColor: '#4b5563', chartLine: '#d1d5db', chartGrid: '#374151', chartDotFill: '#d1d5db', chartDotStroke: '#1f2937', headerBg: 'bg-gray-900', cellHover: 'hover:bg-gray-700', cellActive: 'bg-gray-600', xColor: 'text-gray-100', sleepBarDefault: '#4b5563', sleepBarGreen: '#22c55e', sleepBarRed: '#ef4444', chartText: '#f3f4f6', innerCardBg: 'bg-gray-900', journalSquare: 'bg-gray-700', journalActive: 'bg-white',
+                    popBg: '#111827', popText: '#f3f4f6', popGrid: '#374151'
+                },
+                black: { 
+                    id: 'black', label: 'Dark', bgApp: 'bg-zinc-950', bgCard: 'bg-zinc-900', textMain: 'text-zinc-100', textSec: 'text-zinc-500', border: 'border-zinc-100', borderSec: 'border-zinc-800', accent: 'bg-zinc-800', highlight: 'bg-zinc-800', inputFocus: 'focus:border-zinc-500', btn: 'bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 text-zinc-300 shadow-sm', dotColor: '#3f3f46', chartLine: '#f4f4f5', chartGrid: '#27272a', chartDotFill: '#f4f4f5', chartDotStroke: '#18181b', headerBg: 'bg-zinc-900', cellHover: 'hover:bg-zinc-800', cellActive: 'bg-zinc-800', xColor: 'text-zinc-100', sleepBarDefault: '#ffffff', sleepBarGreen: '#22c55e', sleepBarRed: '#ef4444', chartText: '#f4f4f5', innerCardBg: 'bg-zinc-950', journalSquare: 'bg-zinc-800', journalActive: 'bg-zinc-100',
+                    popBg: '#09090b', popText: '#f4f4f5', popGrid: '#27272a'
+                }
+            };
+            const fontOptions = [
+                { name: 'Typewriter', value: '"Courier Prime", monospace' }, { name: 'Clean', value: '"Inter", sans-serif' }, { name: 'Classic', value: '"Playfair Display", serif' }, { name: 'Tech', value: '"Inconsolata", monospace' }, { name: 'Script', value: '"Dancing Script", cursive' }, { name: 'Future', value: '"Orbitron", sans-serif' }, { name: 'System', value: 'Arial, sans-serif' }
+            ];
+
+            const [currentView, setCurrentView] = useState('home'); 
+            const [currentDate, setCurrentDate] = useState(new Date());
+            const [habits, setHabits] = useState(() => loadState('habits', [{id:1,name:"Workout 45m"},{id:2,name:"Read 10 pages"},{id:3,name:"Drink 3L Water"},{id:4,name:"No Sugar"},{id:5,name:"Journaling"},{id:6,name:"Sleep 8hrs"},{id:7,name:"Deep Work 2h"}]));
+            const [protocolsTitle, setProtocolsTitle] = useState(() => localStorage.getItem('protocolsTitle') || "PROTOCOLS");
+            const [activeTheme, setActiveTheme] = useState(() => localStorage.getItem('theme') || 'offWhite');
+            const [activeFont, setActiveFont] = useState(() => localStorage.getItem('font') || fontOptions[0].value);
+            const [trackingData, setTrackingData] = useState(() => loadState('trackingData', {}));
+            const [sleepData, setSleepData] = useState(() => loadState('sleepData', {}));
+            const [apiKey, setApiKey] = useState(() => localStorage.getItem('geminiApiKey') || "");
+            const [journalEntries, setJournalEntries] = useState(() => loadState('journalEntries', []));
+            
+            const [journalTitle, setJournalTitle] = useState("");
+            const [journalContent, setJournalContent] = useState("");
+            const [editingId, setEditingId] = useState(null);
+            const [selectedDate, setSelectedDate] = useState(getLocalISOString(new Date()));
+
+            const [aiInsight, setAiInsight] = useState(null);
+            const [isInsightOpen, setIsInsightOpen] = useState(false);
+            const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
+            const [isFontMenuOpen, setIsFontMenuOpen] = useState(false);
+            const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+            const [isGenerating, setIsGenerating] = useState(false);
+            
+            // Focus Mode State
+            const [focusTimeLeft, setFocusTimeLeft] = useState(25 * 60);
+            const [focusIsActive, setFocusIsActive] = useState(false);
+            const [focusTotalTime, setFocusTotalTime] = useState(25 * 60);
+            const [focusEndTime, setFocusEndTime] = useState(null); 
+            
+            const themeMenuRef = useRef(null);
+            const fontMenuRef = useRef(null);
+            const popupRef = useRef(null);
+
+            // Effects
+            useEffect(() => { localStorage.setItem('habits', JSON.stringify(habits)); }, [habits]);
+            useEffect(() => { localStorage.setItem('protocolsTitle', protocolsTitle); }, [protocolsTitle]);
+            useEffect(() => { localStorage.setItem('theme', activeTheme); }, [activeTheme]);
+            useEffect(() => { localStorage.setItem('font', activeFont); }, [activeFont]);
+            useEffect(() => { localStorage.setItem('trackingData', JSON.stringify(trackingData)); }, [trackingData]);
+            useEffect(() => { localStorage.setItem('sleepData', JSON.stringify(sleepData)); }, [sleepData]);
+            useEffect(() => { localStorage.setItem('geminiApiKey', apiKey); }, [apiKey]);
+            useEffect(() => { localStorage.setItem('journalEntries', JSON.stringify(journalEntries)); }, [journalEntries]);
+
+            // Sync Logic: Heartbeat Method
+            const pushUpdateToPopup = useCallback(() => {
+                if (popupRef.current && !popupRef.current.closed) {
+                    popupRef.current.postMessage({
+                        type: 'STATE_UPDATE',
+                        payload: { timeLeft: focusTimeLeft, totalTime: focusTotalTime, isActive: focusIsActive, endTime: focusEndTime }
+                    }, '*');
+                }
+            }, [focusTimeLeft, focusTotalTime, focusIsActive, focusEndTime]);
+
+            useEffect(() => {
+                const handleWindowMessage = (event) => {
+                    const { type, payload } = event.data;
+                    
+                    if (type === 'TOGGLE') {
+                        setFocusIsActive(prev => {
+                            const willBeActive = !prev;
+                            if (willBeActive) {
+                                setFocusEndTime(Date.now() + focusTimeLeft * 1000);
+                            } else {
+                                setFocusEndTime(null);
+                            }
+                            return willBeActive;
+                        });
+                    } else if (type === 'ADJUST') {
+                        setFocusIsActive(false);
+                        setFocusEndTime(null);
+                        setFocusTimeLeft(prev => Math.max(0, prev + payload * 60));
+                        setFocusTotalTime(prev => Math.max(60, prev + payload * 60));
+                    } else if (type === 'SYNC_REQUEST') {
+                        pushUpdateToPopup();
+                    }
+                };
+
+                window.addEventListener('message', handleWindowMessage);
+                return () => window.removeEventListener('message', handleWindowMessage);
+            }, [focusTimeLeft, pushUpdateToPopup]);
+
+            useEffect(() => {
+                let interval = setInterval(() => {
+                    if (focusIsActive && focusEndTime) {
+                        const now = Date.now();
+                        const secondsLeft = Math.ceil((focusEndTime - now) / 1000);
+                        if (secondsLeft <= 0) {
+                            setFocusTimeLeft(0);
+                            setFocusIsActive(false);
+                            setFocusEndTime(null);
+                        } else {
+                            setFocusTimeLeft(secondsLeft);
+                        }
+                    }
+                    pushUpdateToPopup();
+                }, 100);
+                return () => clearInterval(interval);
+            }, [focusIsActive, focusEndTime, pushUpdateToPopup]);
+
+            useEffect(() => {
+                const handleClickOutside = (event) => {
+                    if (themeMenuRef.current && !themeMenuRef.current.contains(event.target)) setIsThemeMenuOpen(false);
+                    if (fontMenuRef.current && !fontMenuRef.current.contains(event.target)) setIsFontMenuOpen(false);
+                };
+                document.addEventListener("mousedown", handleClickOutside);
+                return () => document.removeEventListener("mousedown", handleClickOutside);
+            }, []);
+
+            const t = themes[activeTheme];
+            const isDarkTheme = activeTheme === 'black' || activeTheme === 'gray';
+            
+            const getDaysInMonth = (d) => new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+            const getDayLabel = (d) => new Date(currentDate.getFullYear(), currentDate.getMonth(), d).toLocaleDateString('en-US', { weekday: 'narrow' });
+            const getFormattedDate = (d) => new Date(currentDate.getFullYear(), currentDate.getMonth(), d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            
+            const toggleHabit = (d, id) => { const k = generateDateKey(currentDate, d); setTrackingData(prev => { const dayData = prev[k] || {}; const newVal = !dayData[id]; const newDay = { ...dayData, [id]: newVal }; if (!newVal) delete newDay[id]; return { ...prev, [k]: newDay }; }); };
+            const handleSleepChange = (d, f, v) => { const k = generateDateKey(currentDate, d); setSleepData(prev => ({ ...prev, [k]: { ...prev[k], [f]: v } })); };
+            
+            const addHabit = () => { const newId = Math.max(0, ...habits.map(h => h.id)) + 1; setHabits([...habits, { id: newId, name: "New Habit" }]); };
+            const removeHabit = (id) => { if(confirm("Remove?")) setHabits(habits.filter(h => h.id !== id)); };
+            const clearMonth = () => { if (window.confirm("Clear month data?")) { const days = getDaysInMonth(currentDate); const newTrack = { ...trackingData }; const newSleep = { ...sleepData }; for (let i = 1; i <= days; i++) { const k = generateDateKey(currentDate, i); delete newTrack[k]; delete newSleep[k]; } setTrackingData(newTrack); setSleepData(newSleep); } };
+            const saveEntry = () => { if (!journalTitle.trim() && !journalContent.trim()) return; const dateKey = selectedDate; const displayDate = new Date(selectedDate).toLocaleDateString('en-US', { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' }); const newEntry = { id: editingId || Date.now(), date: dateKey, fullDate: displayDate, title: journalTitle || "Untitled Entry", content: journalContent }; let updatedEntries; if (editingId) { updatedEntries = journalEntries.map(e => e.id === editingId ? newEntry : e); setEditingId(null); } else { updatedEntries = [newEntry, ...journalEntries]; } setJournalEntries(updatedEntries); setJournalTitle(""); setJournalContent(""); };
+            const editEntry = (entry) => { setJournalTitle(entry.title); setJournalContent(entry.content); setEditingId(entry.id); setSelectedDate(entry.date); document.getElementById('journal-form')?.scrollIntoView({ behavior: 'smooth' }); };
+            const deleteEntry = (id) => { if (confirm("Delete this entry?")) { setJournalEntries(journalEntries.filter(e => e.id !== id)); if (editingId === id) { setEditingId(null); setJournalTitle(""); setJournalContent(""); } } };
+            const heatmapData = useMemo(() => { const today = new Date(); const weeks = []; const startDate = new Date(today); startDate.setDate(today.getDate() - 364); while(startDate.getDay() !== 0) { startDate.setDate(startDate.getDate() - 1); } let current = new Date(startDate); const endDate = new Date(today); while (current <= endDate || weeks.length < 53) { const week = []; for (let i = 0; i < 7; i++) { const dateStr = getLocalISOString(current); const hasEntry = journalEntries.some(e => e.date === dateStr); const isToday = dateStr === getLocalISOString(today); const isSelected = dateStr === selectedDate; week.push({ date: dateStr, active: hasEntry, day: current.getDate(), month: current.getMonth(), isToday, isSelected }); current.setDate(current.getDate() + 1); } weeks.push(week); } return weeks; }, [journalEntries, selectedDate]);
+            const monthLabels = useMemo(() => { const labels = []; heatmapData.forEach((week, index) => { const firstDay = new Date(week[0].date); if (week.some(d => d.day === 1) || index === 0) { if (labels.length === 0 || (index - labels[labels.length-1].index) > 2) { labels.push({ text: firstDay.toLocaleDateString('en-US', { month: 'short' }), index }); } } }); return labels; }, [heatmapData]);
+            const handleDayClick = (dateStr) => { setSelectedDate(dateStr); if (!editingId) { setJournalTitle(""); setJournalContent(""); } document.getElementById('journal-form')?.scrollIntoView({ behavior: 'smooth' }); };
+            const generateInsight = async () => { if (!apiKey) { setIsSettingsOpen(true); alert("Please enter API Key"); return; } setIsGenerating(true); setIsInsightOpen(true); setAiInsight(null); const days = getDaysInMonth(currentDate); const prompt = `Analyze habit data. Completion: ${Math.round(chartData.reduce((a,b)=>a+b.score,0)/(days*habits.length)*100)}%. JSON: {"analysis":"...","tip":"..."}`; try { const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: "application/json" } }) }); const d = await res.json(); setAiInsight(JSON.parse(d.candidates[0].content.parts[0].text)); } catch (e) { console.error(e); setAiInsight({analysis: "Error connecting.", tip: "Check API Key."}); } setIsGenerating(false); };
+            const daysInMonth = getDaysInMonth(currentDate);
+            const chartData = useMemo(() => { const data = []; for (let i = 1; i <= daysInMonth; i++) { const k = generateDateKey(currentDate, i); const score = habits.reduce((acc, h) => acc + (trackingData[k]?.[h.id] ? 1 : 0), 0); data.push({ day: i, score }); } return data; }, [trackingData, habits, daysInMonth, currentDate]);
+            const sleepChartData = useMemo(() => { const data = []; for (let i = daysInMonth; i >= 1; i--) { const k = generateDateKey(currentDate, i); const s = sleepData[k] || {}; data.push({ day: i, dateStr: getFormattedDate(i), duration: calculateDuration(s.bedtime, s.wakeUp), bedtime: s.bedtime, wakeUp: s.wakeUp }); } return data; }, [sleepData, daysInMonth, currentDate]);
+            const formatFocusTime = (secs) => { const m = Math.floor(secs / 60).toString().padStart(2, '0'); const s = (secs % 60).toString().padStart(2, '0'); return `${m}:${s}`; };
+
+            const handleToggleFocus = () => {
+                setFocusIsActive(prev => {
+                    const willBeActive = !prev;
+                    if (willBeActive) {
+                        setFocusEndTime(Date.now() + focusTimeLeft * 1000);
+                    } else {
+                        setFocusEndTime(null);
+                    }
+                    return willBeActive;
+                });
+            };
+
+            const handleAdjustTime = (minutes) => {
+                setFocusIsActive(false);
+                setFocusEndTime(null);
+                setFocusTimeLeft(prev => Math.max(0, prev + minutes * 60));
+                setFocusTotalTime(prev => Math.max(60, prev + minutes * 60));
+            };
+
+            const handleOpenPopup = () => {
+                try {
+                    popupRef.current = openTimerWindow(t, focusTimeLeft, focusTotalTime, focusIsActive, focusEndTime);
+                    if (!popupRef.current) {
+                        alert("Popup blocked! Please allow popups for this site.");
+                    }
+                } catch (e) {
+                    console.error("Popup failed:", e);
+                    alert("Popup failed to open. Check browser settings.");
+                }
+            };
+
+            return (
+                <div className={`flex h-screen ${t.bgApp} ${t.textMain} transition-colors duration-500 ${isDarkTheme ? 'theme-dark-input' : ''}`} style={{ fontFamily: activeFont }}>
+                    <style>{`
+                        .bg-dot-grid { background-size: 20px 20px; background-image: radial-gradient(circle, ${t.dotColor} 1px, transparent 1px); }
+                        input[type="text"], input[type="time"] { background: transparent; border: none; outline: none; width: 100%; font-family: inherit; color: inherit; }
+                    `}</style>
+
+                    {/* SIDEBAR (Desktop) */}
+                    <div className={`hidden md:flex w-20 flex-shrink-0 flex-col items-center py-8 border-r-2 ${t.border} ${t.bgCard} z-20`}>
+                        <div className="mb-8 p-2 bg-black text-white rounded-full font-bold">AH</div>
+                        <div className="flex flex-col gap-6 w-full items-center">
+                            <button onClick={() => setCurrentView('home')} className={`p-3 rounded-xl transition-all ${currentView === 'home' ? 'bg-black text-white' : 'hover:bg-gray-200 text-gray-500'}`} title="Dashboard"><Home size={24}/></button>
+                            <button onClick={() => setCurrentView('journal')} className={`p-3 rounded-xl transition-all ${currentView === 'journal' ? 'bg-black text-white' : 'hover:bg-gray-200 text-gray-500'}`} title="Journal"><Book size={24}/></button>
+                            <button onClick={() => setCurrentView('focus')} className={`p-3 rounded-xl transition-all ${currentView === 'focus' ? 'bg-black text-white' : 'hover:bg-gray-200 text-gray-500'}`} title="Focus"><TimerIcon size={24}/></button>
+                            <button onClick={() => setCurrentView('settings')} className={`p-3 rounded-xl transition-all ${currentView === 'settings' ? 'bg-black text-white' : 'hover:bg-gray-200 text-gray-500'}`} title="Settings"><Settings size={24}/></button>
+                        </div>
+                        <div className="mt-auto flex flex-col gap-4 items-center">
+                            <div className="relative" ref={fontMenuRef}>
+                                <button className="p-2 hover:bg-gray-200 rounded text-gray-500" onClick={() => setIsFontMenuOpen(!isFontMenuOpen)}><Type size={20}/></button>
+                                {isFontMenuOpen && <div className="absolute bottom-0 left-14 mb-2 bg-white border border-gray-300 shadow-xl flex flex-col z-50 min-w-[160px] rounded-md">{fontOptions.map(f => <button key={f.name} onClick={() => { setActiveFont(f.value); setIsFontMenuOpen(false); }} className="text-left px-4 py-3 hover:bg-gray-100 text-sm text-black block w-full" style={{fontFamily: f.value}}>{f.name}</button>)}</div>}
+                            </div>
+                             <div className="relative" ref={themeMenuRef}>
+                                <button className="p-2 hover:bg-gray-200 rounded text-gray-500" onClick={() => setIsThemeMenuOpen(!isThemeMenuOpen)}><Palette size={20}/></button>
+                                {isThemeMenuOpen && <div className="absolute bottom-0 left-14 mb-2 p-2 bg-white border border-gray-300 shadow-xl flex gap-2 z-50 rounded-md">{Object.values(themes).map(th => <button key={th.id} onClick={() => { setActiveTheme(th.id); setIsThemeMenuOpen(false); }} className={`w-6 h-6 rounded-full border border-gray-300 ${th.id === activeTheme ? 'ring-2 ring-blue-500' : ''}`} style={{ backgroundColor: th.id === 'black' ? '#18181b' : th.id === 'gray' ? '#1f2937' : th.id === 'offWhite' ? '#faf9f6' : '#ffffff' }} />)}</div>}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* MAIN CONTENT */}
+                    <div className="flex-grow h-full overflow-y-auto custom-scrollbar relative pb-24 md:pb-0">
+                        <div className="absolute inset-0 bg-dot-grid opacity-20 pointer-events-none z-0"></div>
+                        
+                        {currentView === 'home' && (
+                            <div className="relative z-10 p-4 md:p-12 max-w-[1200px] mx-auto">
+                                <header className={`mb-8 flex justify-between items-center border-b-2 ${t.border} pb-6`}>
+                                    <div className="flex items-center gap-2 md:gap-4">
+                                        <button onClick={() => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth() - 1)))} className={`p-2 rounded transition-all ${t.btn}`}><ChevronLeft size={20}/></button>
+                                        <h1 className="text-xl md:text-3xl font-bold tracking-tighter uppercase">{currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</h1>
+                                        <button onClick={() => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth() + 1)))} className={`p-2 rounded transition-all ${t.btn}`}><ChevronRight size={20}/></button>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <button onClick={generateInsight} className={`px-3 py-2 flex items-center gap-2 text-xs md:text-sm font-bold rounded transition-all ${t.btn}`}><Brain size={16} /> <span className="hidden md:inline">Coach</span></button>
+                                        <button onClick={clearMonth} className={`p-2 text-red-500 hover:bg-red-50 border border-transparent rounded transition-all`}><Trash2 size={20}/></button>
+                                    </div>
+                                </header>
+
+                                <div className="mb-12">
+                                    <div className={`border-2 ${t.border} ${t.bgCard} overflow-x-auto custom-scrollbar`}>
+                                        <div className="min-w-max">
+                                            <div className={`flex border-b-2 ${t.border}`}>
+                                                <div className={`sticky left-0 z-20 w-40 md:w-64 flex-shrink-0 p-2 border-r-2 ${t.border} ${t.headerBg} flex items-center justify-between shadow-md group`}>
+                                                    <input type="text" value={protocolsTitle} onChange={(e) => setProtocolsTitle(e.target.value)} className={`bg-transparent border-none focus:outline-none w-full font-bold uppercase text-sm tracking-wider ${t.textMain}`} />
+                                                    <button onClick={addHabit} className="p-1 hover:bg-black/10 rounded"><Plus size={16} /></button>
+                                                </div>
+                                                {Array.from({ length: daysInMonth }).map((_, i) => {
+                                                    const d = i + 1;
+                                                    const isToday = d === new Date().getDate() && currentDate.getMonth() === new Date().getMonth();
+                                                    return <div key={d} className={`w-10 md:w-12 flex-shrink-0 border-r ${t.borderSec} flex flex-col items-center justify-center py-2 ${isToday ? t.highlight : ''}`}><span className={`text-[10px] opacity-50 font-bold ${t.textMain}`}>{getDayLabel(d)}</span><span className={`text-sm font-bold ${t.textMain}`}>{d}</span></div>;
+                                                })}
+                                            </div>
+                                            {habits.map((h) => (
+                                                <div key={h.id} className={`flex border-b ${t.borderSec} group ${t.cellHover}`}>
+                                                    <div className={`sticky left-0 z-10 w-40 md:w-64 flex-shrink-0 p-2 border-r-2 ${t.border} flex justify-between items-center ${t.bgCard} group-hover:${t.headerBg} shadow-md`}>
+                                                        <input type="text" value={h.name} onChange={(e) => setHabits(habits.map(hab => hab.id === h.id ? { ...hab, name: e.target.value } : hab))} className={`text-sm font-medium truncate w-full bg-transparent focus:outline-none ${t.textMain}`} />
+                                                        <button onClick={() => removeHabit(h.id)} className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600"><Trash2 size={12}/></button>
+                                                    </div>
+                                                    {Array.from({ length: daysInMonth }).map((_, i) => {
+                                                        const d = i + 1;
+                                                        const key = generateDateKey(currentDate, d);
+                                                        const checked = trackingData[key]?.[h.id];
+                                                        return <div key={d} onClick={() => toggleHabit(d, h.id)} className={`w-10 md:w-12 flex-shrink-0 border-r ${t.borderSec} cursor-pointer flex items-center justify-center ${checked ? t.cellActive : ''} ${t.cellHover}`}>{checked && <span className={`text-xl font-bold ${t.xColor}`} style={{fontFamily:'"Comic Sans MS", cursive'}}>X</span>}</div>;
+                                                    })}
+                                                </div>
+                                            ))}
+                                            <div className={`flex ${t.accent} border-t-2 ${t.border}`}>
+                                                <div className={`sticky left-0 z-10 w-40 md:w-64 flex-shrink-0 p-3 border-r-2 ${t.border} font-bold text-right uppercase text-sm ${t.accent} shadow-md ${t.textMain}`}>Daily Score</div>
+                                                {chartData.map((d) => <div key={d.day} className={`w-10 md:w-12 flex-shrink-0 border-r ${t.borderSec} flex items-center justify-center ${t.bgCard}`}><span className={`text-xs font-bold ${t.textMain} ${d.score === habits.length ? 'underline' : 'opacity-50'}`}>{d.score || ''}</span></div>)}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="mb-12">
+                                    <div className={`w-full h-64 md:h-80 border-2 ${t.border} ${t.bgCard} relative p-4`}>
+                                        <div className="absolute top-2 left-4 text-xs opacity-50 uppercase font-bold">Monthly Progress</div>
+                                        <ResponsiveLineChart data={chartData} maxScore={habits.length} themeColors={t} />
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <h2 className={`text-3xl font-bold uppercase mb-8 text-center ${t.textMain}`}>SLEEP</h2>
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                                        <div className={`border-2 ${t.border} ${t.bgCard} p-6 h-96 flex flex-col relative shadow-lg`}>
+                                            <h2 className={`text-xl font-bold uppercase mb-6 tracking-wider ${t.textMain}`}>LOG INPUT</h2>
+                                            <div className="flex-grow overflow-hidden flex flex-col">
+                                                <div className={`grid grid-cols-[auto_1fr_1fr] gap-2 border-b-2 ${t.border} font-bold text-sm pb-3 mb-2 opacity-70 ${t.textSec}`}>
+                                                    <div className="text-left">DATE</div><div className="text-center">BED</div><div className="text-right">WAKE</div>
+                                                </div>
+                                                <div className="overflow-y-auto custom-scrollbar flex-grow relative z-10">
+                                                    {sleepChartData.map((d) => (
+                                                        <div key={d.day} className={`grid grid-cols-[auto_1fr_1fr] gap-2 py-3 border-b ${t.borderSec} text-sm items-center hover:bg-black/5`}>
+                                                            <div className={`font-mono text-left ${t.textMain}`}>{d.dateStr}</div>
+                                                            <div className="text-center"><input type="time" value={d.bedtime || ''} onChange={(e) => handleSleepChange(d.day, 'bedtime', e.target.value)} className={`text-center w-full bg-transparent focus:outline-none cursor-pointer ${t.textMain} ${isDarkTheme ? 'theme-dark-input' : ''}`} /></div>
+                                                            <div className="text-right"><input type="time" value={d.wakeUp || ''} onChange={(e) => handleSleepChange(d.day, 'wakeUp', e.target.value)} className={`text-right w-full bg-transparent focus:outline-none cursor-pointer ${t.textMain} ${isDarkTheme ? 'theme-dark-input' : ''}`} /></div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className={`border-2 ${t.border} ${t.bgCard} p-6 h-96 flex flex-col shadow-lg`}>
+                                            <h2 className={`text-xl font-bold uppercase mb-6 tracking-wider ${t.textMain}`}>VISUALS</h2>
+                                            <div className="flex-grow w-full relative overflow-auto custom-scrollbar">
+                                                <SleepHorizontalBarChart data={sleepChartData} themeColors={t} />
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {currentView === 'journal' && (
+                            <div className="relative z-10 p-4 md:p-12 max-w-[1200px] mx-auto flex flex-col gap-12">
+                                <div>
+                                    <h2 className={`text-xl font-bold uppercase border-b-2 ${t.border} inline-block pb-1 mb-6`}>Diary</h2>
+                                    <div className={`w-full overflow-x-auto custom-scrollbar p-4 border-2 ${t.border} ${t.bgCard} shadow-sm`}>
+                                        <div className="flex gap-1 min-w-max mb-1 pl-8">
+                                            {heatmapData.map((week, i) => {
+                                                const label = monthLabels.find(l => l.index === i);
+                                                return <div key={i} className="w-3 text-[10px] opacity-50 text-center">{label ? label.text : ''}</div>
+                                            })}
+                                        </div>
+                                        <div className="flex gap-1 min-w-max">
+                                            <div className="flex flex-col gap-1 text-[9px] opacity-50 pt-[2px] mr-2"><div className="h-3"></div><div className="h-3">Mon</div><div className="h-3"></div><div className="h-3">Wed</div><div className="h-3"></div><div className="h-3">Fri</div><div className="h-3"></div></div>
+                                            {heatmapData.map((week, i) => <div key={i} className="flex flex-col gap-1">{week.map((day, j) => <div key={j} onClick={() => handleDayClick(day.date)} data-date={day.date} className={`w-3 h-3 rounded-sm heatmap-day transition-all cursor-pointer ${day.active ? t.journalActive : t.journalSquare} ${day.isSelected ? 'ring-2 ring-blue-500 ring-offset-1' : ''}`} title={`${day.date}`}></div>)}</div>)}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div id="journal-form" className={`border-2 ${t.border} ${t.bgCard} p-6 shadow-lg relative`}>
+                                    <div className="flex justify-between items-center mb-6">
+                                        <h2 className={`text-xl font-bold uppercase tracking-wider ${t.textMain}`}>{editingId ? 'Edit' : 'New'} <span className={`ml-3 text-sm opacity-50 normal-case font-mono border-b ${t.borderSec}`}>{new Date(selectedDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span></h2>
+                                        {selectedDate !== getLocalISOString(new Date()) && <button onClick={() => handleDayClick(getLocalISOString(new Date()))} className="text-xs hover:underline opacity-50">Today</button>}
+                                    </div>
+                                    <div className="flex flex-col gap-4">
+                                        <input type="text" placeholder="Title..." value={journalTitle} onChange={(e) => setJournalTitle(e.target.value)} className={`w-full bg-transparent text-2xl font-bold border-b-2 ${t.borderSec} pb-2 focus:outline-none ${t.textMain} placeholder-opacity-50`} />
+                                        <textarea placeholder="Write here..." value={journalContent} onChange={(e) => setJournalContent(e.target.value)} className={`w-full bg-transparent border ${t.borderSec} p-4 h-64 resize-none focus:outline-none ${t.textMain} placeholder-opacity-50 leading-relaxed`} />
+                                        <div className="flex justify-end gap-4">
+                                            {editingId && <button onClick={() => {setEditingId(null); setJournalTitle(""); setJournalContent("");}} className={`px-6 py-2 ${t.textSec}`}>Cancel</button>}
+                                            <button onClick={saveEntry} className={`px-8 py-3 ${t.btn} font-bold uppercase rounded`}>Save</button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <h2 className={`text-xl font-bold uppercase border-b-2 ${t.border} inline-block pb-1 mb-6`}>Entries</h2>
+                                    <div className="grid grid-cols-1 gap-6">
+                                        {journalEntries.length === 0 ? <div className={`text-center py-12 opacity-50 italic ${t.textSec}`}>No entries yet.</div> : 
+                                            journalEntries.sort((a,b) => new Date(b.date) - new Date(a.date)).map(entry => (
+                                                <div key={entry.id} className={`border ${t.borderSec} ${t.innerCardBg} p-6 hover:shadow-md transition-all group relative`}>
+                                                    <div className="flex justify-between items-start mb-4">
+                                                        <div><span className={`text-xs font-mono uppercase tracking-widest opacity-60 ${t.textMain}`}>{entry.fullDate}</span><h3 className={`text-xl font-bold mt-1 ${t.textMain}`}>{entry.title}</h3></div>
+                                                        <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                            <button onClick={() => editEntry(entry)} className={`p-2 hover:bg-gray-200 rounded ${t.textMain}`}><Edit2 size={16}/></button>
+                                                            <button onClick={() => deleteEntry(entry.id)} className={`p-2 hover:bg-red-50 text-red-500 rounded`}><Trash2 size={16}/></button>
+                                                        </div>
+                                                    </div>
+                                                    <p className={`whitespace-pre-wrap leading-relaxed opacity-80 line-clamp-3 ${t.textMain}`}>{entry.content}</p>
+                                                </div>
+                                            ))
+                                        }
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {currentView === 'focus' && (
+                            <div className="flex flex-col items-center justify-center h-full p-6">
+                                <div className="text-center mb-12">
+                                    <h1 className="text-6xl md:text-8xl font-bold font-mono tracking-widest mb-8">{formatFocusTime(focusTimeLeft)}</h1>
+                                    <div className="flex gap-6 justify-center">
+                                        <button onClick={() => handleAdjustTime(-5)} className={`p-3 rounded-full border-2 ${t.border} hover:opacity-50`}><Minus size={24} /></button>
+                                        <button onClick={handleToggleFocus} className={`px-8 py-3 rounded-full border-2 ${t.border} font-bold text-xl hover:bg-black/5`}>{focusIsActive ? <Pause size={24} /> : <Play size={24} />}</button>
+                                        <button onClick={() => handleAdjustTime(5)} className={`p-3 rounded-full border-2 ${t.border} hover:opacity-50`}><Plus size={24} /></button>
+                                    </div>
+                                </div>
+                                <button onClick={handleOpenPopup} className={`flex items-center gap-2 px-6 py-3 rounded border ${t.borderSec} hover:bg-black/5 transition-all ${t.btn}`}><ExternalLink size={20} /> Pop Out Widget</button>
+                                <p className={`mt-4 text-sm opacity-50 ${t.textSec}`}>Opens a mini timer window you can keep on top.</p>
+                            </div>
+                        )}
+
+                        {currentView === 'settings' && (
+                            <div className="flex flex-col items-center justify-center h-full p-6">
+                                <div className={`${t.bgCard} border-2 ${t.border} p-8 shadow-2xl max-w-md w-full`}>
+                                    <h2 className="text-2xl font-bold mb-6">Settings</h2>
+                                    <label className="block text-sm font-bold mb-2">Google Gemini API Key</label>
+                                    <input type="password" className={`w-full p-3 border ${t.borderSec} bg-transparent mb-6 font-mono text-sm ${t.textMain}`} placeholder="Paste AI Key here..." value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
+                                    <button onClick={() => setCurrentView('home')} className={`w-full py-3 ${t.btn} font-bold text-lg`}>Save & Return</button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* BOTTOM NAVIGATION (Mobile Only) */}
+                    <div className={`fixed bottom-0 w-full md:hidden flex justify-around items-center py-3 border-t-2 ${t.border} ${t.bgCard} z-30 pb-safe`}>
+                        <button onClick={() => setCurrentView('home')} className={`p-2 rounded-xl ${currentView === 'home' ? 'bg-black text-white' : 'text-gray-500'}`}><Home size={24}/></button>
+                        <button onClick={() => setCurrentView('journal')} className={`p-2 rounded-xl ${currentView === 'journal' ? 'bg-black text-white' : 'text-gray-500'}`}><Book size={24}/></button>
+                        <button onClick={() => setCurrentView('focus')} className={`p-2 rounded-xl ${currentView === 'focus' ? 'bg-black text-white' : 'text-gray-500'}`}><TimerIcon size={24}/></button>
+                        <button onClick={() => setCurrentView('settings')} className={`p-2 rounded-xl ${currentView === 'settings' ? 'bg-black text-white' : 'text-gray-500'}`}><Settings size={24}/></button>
+                    </div>
+
+                    {/* Insight Modal */}
+                    {isInsightOpen && (
+                        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                            <div className={`${t.bgCard} w-full max-w-md p-8 border-2 ${t.border} shadow-[8px_8px_0px_0px_rgba(0,0,0,0.2)] relative`}>
+                                <button onClick={() => setIsInsightOpen(false)} className="absolute top-2 right-2 p-1 opacity-50 hover:opacity-100"><X size={20}/></button>
+                                <div className="flex flex-col items-center text-center">
+                                    <div className={`${t.accent} p-3 rounded-full mb-4`}><Brain size={32} /></div>
+                                    {isGenerating || !aiInsight ? <div className="py-8 flex flex-col items-center gap-2 opacity-50"><Loader2 className="animate-spin" size={24}/><span>Consulting Coach...</span></div> : 
+                                    <>
+                                        <h3 className="text-xl font-bold mb-2 uppercase tracking-widest">Analysis</h3>
+                                        <p className="mb-6 font-medium leading-relaxed opacity-80">"{aiInsight.analysis}"</p>
+                                        <div className={`w-full h-px ${t.borderSec} mb-6`}></div>
+                                        <h4 className="text-sm opacity-50 uppercase tracking-widest mb-2">Coach's Tip</h4>
+                                        <p className={`${t.accent} p-4 border-l-4 ${t.border} italic`}>"{aiInsight.tip}"</p>
+                                        <p className="text-[10px] mt-4 opacity-40">Note: Anonymized stats sent to Google Gemini.</p>
+                                    </>}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        // --- Helper Components ---
+        const ResponsiveLineChart = ({ data, maxScore, themeColors }) => {
+            if (!data || !data.length) return null;
+            const padding = { top: 20, right: 20, bottom: 30, left: 40 };
+            const width = 1000, height = 300;
+            const xScale = (d) => padding.left + ((d - 1) / (data.length - 1 || 1)) * (width - padding.left - padding.right);
+            const yScale = (s) => height - padding.bottom - (s / (maxScore || 1)) * (height - padding.top - padding.bottom);
+            const points = data.map(d => `${xScale(d.day)},${yScale(d.score)}`).join(" ");
+            return (
+                <div className="w-full h-full">
+                    <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full overflow-visible">
+                        {Array.from({ length: maxScore + 1 }, (_, i) => i).map(tick => (
+                            <g key={`y-${tick}`}>
+                                <line x1={padding.left} y1={yScale(tick)} x2={width - padding.right} y2={yScale(tick)} stroke={themeColors.chartGrid} strokeWidth="1"/>
+                                <text x={padding.left - 10} y={yScale(tick) + 4} textAnchor="end" className="text-[10px] font-mono" fill={themeColors.chartText}>{tick}</text>
+                            </g>
+                        ))}
+                        {data.map((d, i) => (i % 2 === 0 || i === data.length - 1) && <text key={`x-${d.day}`} x={xScale(d.day)} y={height - 10} textAnchor="middle" className="text-[10px] font-mono" fill={themeColors.chartText}>{d.day}</text>)}
+                        <polyline points={points} fill="none" stroke={themeColors.chartLine} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        {data.map(d => <circle key={d.day} cx={xScale(d.day)} cy={yScale(d.score)} r="3" fill={themeColors.chartDotFill} stroke={themeColors.chartDotStroke} strokeWidth="1" className="transition-all duration-300 hover:r-5"/>)}
+                    </svg>
+                </div>
+            );
+        };
+
+        const SleepHorizontalBarChart = ({ data, themeColors }) => {
+            const padding = { top: 10, right: 30, bottom: 30, left: 60 };
+            const barHeight = 20, gap = 20, rowHeight = barHeight + gap;
+            const chartHeight = Math.max(350, padding.top + data.length * rowHeight + padding.bottom);
+            const maxDuration = Math.max(10, ...data.map(d => d.duration || 0));
+            const pixelsPerHour = 50; 
+            const chartWidth = Math.max(500, padding.left + maxDuration * pixelsPerHour + padding.right);
+            const xScale = (h) => padding.left + h * pixelsPerHour;
+            return (
+                <div className="w-full h-full">
+                    <svg width={chartWidth} height={chartHeight} className="overflow-visible">
+                        {Array.from({ length: Math.ceil(maxDuration / 2) + 1 }, (_, i) => i * 2).map(h => (
+                            <g key={`grid-x-${h}`}>
+                                <line x1={xScale(h)} y1={padding.top} x2={xScale(h)} y2={chartHeight - padding.bottom} stroke={themeColors.chartGrid} strokeDasharray="4 4" strokeWidth="1" />
+                                <text x={xScale(h)} y={chartHeight - 10} textAnchor="middle" className="text-[10px] font-mono" fill={themeColors.chartText}>{h}h</text>
+                            </g>
+                        ))}
+                        {data.map((d, i) => {
+                            const y = padding.top + i * rowHeight;
+                            let w = xScale(d.duration) - padding.left;
+                            let color = themeColors.sleepBarDefault;
+                            if (d.duration >= 8) color = themeColors.sleepBarGreen;
+                            else if (d.duration > 0 && d.duration < 6) color = themeColors.sleepBarRed;
+                            return (
+                                <g key={`bar-${d.day}`}>
+                                    <text x={padding.left - 10} y={y + barHeight/1.5} textAnchor="end" className="text-[12px] font-mono" fill={themeColors.chartText}>{d.dateStr}</text>
+                                    <rect x={padding.left} y={y} width={Math.max(0, w)} height={barHeight} fill={color} rx="4" className="transition-all duration-500" />
+                                    {d.duration > 0 && <text x={xScale(d.duration) + 5} y={y + barHeight/1.5} textAnchor="start" className="text-[10px] font-mono" fill={themeColors.textSec}>{d.duration.toFixed(1)}h</text>}
+                                </g>
+                            );
+                        })}
+                    </svg>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<AestheticHabitTracker />);
+    </script>
+</body>
+</html>
